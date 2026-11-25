@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Math Tutor</title>
+  <meta name="description" content="Socratic tutor with math rendering, figures, and an Apple Pencil whiteboard." />
+  <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#16181d" media="(prefers-color-scheme: dark)" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Tutor" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+</head>
+<body data-layout="split">
+  <header id="topbar">
+    <button class="icon-btn" id="btn-sessions" title="Sessions" aria-label="Sessions"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+    <button id="session-title" title="Rename session">New session</button>
+    <span id="cost" title="Estimated API cost of this session"></span>
+    <div class="spacer"></div>
+    <div class="seg" id="layout-seg" role="group" aria-label="Layout">
+      <button data-layout="chat">Chat</button><button data-layout="split">Both</button><button data-layout="board">Board</button>
+    </div>
+    <button class="icon-btn" id="btn-progress" title="Progress" aria-label="Progress"><svg viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg></button>
+    <button class="icon-btn" id="btn-settings" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></button>
+  </header>
+
+  <main id="split">
+    <section id="chat-pane">
+      <div id="messages" aria-live="polite"></div>
+      <div id="quick">
+        <button data-quick="Hint please">Hint</button>
+        <button data-quick="Just tell me">Just tell me</button>
+        <button data-quick="Harder">Harder</button>
+        <button data-quick="Easier">Easier</button>
+        <button data-quick="Show progress">Show progress</button>
+      </div>
+      <form id="composer" autocomplete="off">
+        <button type="button" class="chip" id="attach-chip" title="Send the whiteboard with the next message" aria-pressed="false">
+          <svg viewBox="0 0 24 24"><path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>
+          <span>Board</span>
+        </button>
+        <textarea id="input" rows="1" placeholder="Type, dictate, or write here with the Pencil…" enterkeyhint="send"></textarea>
+        <button type="button" class="icon-btn" id="btn-mic" title="Dictate" aria-label="Dictate" hidden><svg viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z M19 10v2a7 7 0 0 1-14 0v-2 M12 19v3"/></svg></button>
+        <button type="submit" class="icon-btn primary" id="btn-send" title="Send" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4Z"/></svg></button>
+      </form>
+    </section>
+
+    <div id="divider" role="separator" aria-orientation="vertical"></div>
+
+    <section id="board-pane">
+      <div id="board-toolbar">
+        <div class="tool-group" id="colors">
+          <button class="swatch active" data-color="#1f2328" style="--c:#1f2328" aria-label="Black pen"></button>
+          <button class="swatch" data-color="#1f6feb" style="--c:#1f6feb" aria-label="Blue pen"></button>
+          <button class="swatch" data-color="#d1242f" style="--c:#d1242f" aria-label="Red pen"></button>
+          <button class="swatch" data-color="#1a7f37" style="--c:#1a7f37" aria-label="Green pen"></button>
+        </div>
+        <div class="tool-group">
+          <button class="icon-btn" id="tool-size" title="Pen thickness" aria-label="Pen thickness"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5" class="fill"/></svg></button>
+          <button class="icon-btn" id="tool-eraser" title="Eraser (removes whole strokes)" aria-label="Eraser"><svg viewBox="0 0 24 24"><path d="M20 20H8.5L3.6 15.1a1.5 1.5 0 0 1 0-2.1L13 3.6a1.5 1.5 0 0 1 2.1 0l5.3 5.3a1.5 1.5 0 0 1 0 2.1L11.5 20M7.5 9l7.5 7.5"/></svg></button>
+          <button class="icon-btn" id="tool-finger" title="Finger drawing (turns off automatically when an Apple Pencil is used)" aria-label="Finger drawing"><svg viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-5.9-2.3l-3.6-3.6a2 2 0 0 1 2.8-2.8L7 15"/></svg></button>
+        </div>
+        <div class="tool-group">
+          <button class="icon-btn" id="tool-undo" title="Undo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+          <button class="icon-btn" id="tool-redo" title="Redo" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+          <button class="icon-btn" id="tool-clear" title="Clear board" aria-label="Clear board"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>
+        </div>
+        <div class="spacer"></div>
+        <button class="pill primary" id="board-send" title="Send the board (and any typed text)"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4Z"/></svg><span>Send board</span></button>
+      </div>
+      <div id="board"></div>
+    </section>
+  </main>
+
+  <aside id="drawer" hidden>
+    <div class="drawer-panel">
+      <div class="drawer-head">
+        <h2>Sessions</h2>
+        <button class="icon-btn" id="drawer-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <div class="drawer-new">
+        <button class="pill primary" id="new-tutor"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Tutor session</span></button>
+        <button class="pill" id="new-chat"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Free chat</span></button>
+      </div>
+      <ul id="session-list"></ul>
+    </div>
+    <div class="drawer-scrim" id="drawer-scrim"></div>
+  </aside>
+
+  <div id="modal-root"></div>
+  <div id="toast" role="status"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

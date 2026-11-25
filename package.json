@@ -1,0 +1,26 @@
+{
+  "name": "math-tutor",
+  "version": "1.0.0",
+  "description": "Socratic math tutor for iPad: KaTeX, figures, Apple Pencil whiteboard, Claude API",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host",
+    "typecheck": "tsc"
+  },
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.14.0",
+    "dompurify": "^3.5.0",
+    "katex": "^0.19.1",
+    "marked": "^18.3.0",
+    "perfect-freehand": "^1.2.3"
+  },
+  "devDependencies": {
+    "@types/katex": "^0.16.8",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  },
+  "private": true
+}
