@@ -26,6 +26,7 @@ export interface Settings {
   model: string;
   effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   speechLang: string;
+  openaiKey: string;
   penOnly: boolean;
   fontScale: number;
 }
@@ -36,6 +37,7 @@ export const DEFAULT_SETTINGS: Settings = {
   model: 'claude-opus-5-5',
   effort: 'medium',
   speechLang: navigator.language || 'en-US',
+  openaiKey: '',
   penOnly: false,
   fontScale: 1,
 };

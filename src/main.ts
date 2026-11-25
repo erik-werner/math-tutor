@@ -5,6 +5,7 @@ import { Board, loadImage, svgToPng } from './board';
 import { MODELS, addUsage, friendlyError, streamReply } from './claude';
 import { extractLastSkillMap, renderMarkdown, renderSkillMap } from './markdown';
 import { systemPrompt, type Mode } from './prompt';
+import { Recorder, recordingSupported, transcribe, type TranscribeContext } from './transcribe';
 import {
   type Session, type Settings, type StoredMessage,
   deleteSession, exportAll, getBoard, getSession, importAll, listSessions, loadSettings,
@@ -371,24 +372,31 @@ function setBusyUi(on: boolean) {
 let echoGuard: { text: string; until: number } | null = null;
 let stopDictation: () => void = () => {};
 
+// Compares texts ignoring case, punctuation and spacing: iOS often re-inserts dictated text
+// with a capital letter or a final period added.
+const normText = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
 function clearComposerAfterSend(sent: string) {
   stopDictation();
+  // Taking focus away from the field ends an active iPad keyboard-dictation session,
+  // so it can't write the text back. (Hides the keyboard, which also frees space for the reply.)
+  if (document.activeElement === input) input.blur();
   input.value = '';
   autosize();
-  const norm = sent.replace(/\s+/g, ' ').trim();
+  const norm = normText(sent);
   if (norm) {
-    echoGuard = { text: norm, until: Date.now() + 2000 };
+    echoGuard = { text: norm, until: Date.now() + 4000 };
     // Some dictation commits don't fire any event, so also check on a timer.
-    for (const ms of [250, 700, 1400]) setTimeout(dropDictationEcho, ms);
+    for (const ms of [150, 400, 900, 1600, 2500, 3500]) setTimeout(dropDictationEcho, ms);
   }
 }
 
 function dropDictationEcho() {
   if (!echoGuard) return;
   if (Date.now() > echoGuard.until) { echoGuard = null; return; }
-  const v = input.value.replace(/\s+/g, ' ').trim();
+  const v = normText(input.value);
   // Require a substantial chunk, so a new message typed right away isn't wiped.
-  if (v.length >= Math.min(echoGuard.text.length, 6) && echoGuard.text.includes(v)) {
+  if (v && v.length >= Math.min(echoGuard.text.length, 6) && echoGuard.text.includes(v)) {
     input.value = '';
     autosize();
   }
@@ -425,48 +433,131 @@ function setupComposer() {
   setupDictation();
 }
 
-// ---------- Dictation (Web Speech API; the iPad keyboard's mic key also works) ----------
-function setupDictation() {
-  const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-  const btn = $('#btn-mic');
-  if (!SR) return;
-  btn.hidden = false;
-  let rec: any = null;
-  stopDictation = () => {
-    if (!rec) return;
-    const r = rec;
-    rec = null;
-    r.onresult = null;
-    try { r.abort(); } catch { /* already stopped */ }
-    btn.classList.remove('listening');
+// ---------- Voice input ----------
+// With an OpenAI key: record and transcribe with OpenAI, using the conversation as context.
+// Without one: the browser's Web Speech API, where available. (The iPad keyboard's own mic
+// key always works too.)
+const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+const recorder = new Recorder();
+let transcribing: AbortController | null = null;
+
+function useOpenAIVoice() { return !!settings.openaiKey.trim() && recordingSupported(); }
+
+function updateMicButton() {
+  $('#btn-mic').hidden = !(useOpenAIVoice() || SpeechRec);
+}
+
+const MIC_ICONS = {
+  idle: '<svg viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z M19 10v2a7 7 0 0 1-14 0v-2 M12 19v3"/></svg>',
+  listening: '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" class="fill"/></svg>',
+  busy: '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg>',
+};
+
+function setMicState(state: 'idle' | 'listening' | 'busy', title?: string) {
+  const btn = $('#btn-mic') as HTMLButtonElement;
+  btn.innerHTML = MIC_ICONS[state];
+  btn.classList.toggle('listening', state === 'listening');
+  btn.classList.toggle('busy', state === 'busy');
+  btn.title = title ?? (state === 'listening' ? 'Stop and transcribe' : 'Dictate');
+}
+
+function appendToInput(text: string) {
+  if (!text) return;
+  const cur = input.value.replace(/\s+$/, '');
+  input.value = cur ? cur + ' ' + text : text;
+  autosize();
+}
+
+function transcriptionContext(): TranscribeContext {
+  const lastTutor = [...session.messages].reverse().find((m) => m.role === 'assistant');
+  const sm = session.skillmap;
+  return {
+    lastTutorMessage: lastTutor ? textOf(lastTutor) : undefined,
+    topic: sm?.topic,
+    terms: Array.isArray(sm?.skills) ? sm!.skills.map((k) => String(k.name ?? '')) : [],
   };
-  btn.addEventListener('click', () => {
-    if (rec) { rec.stop(); return; }
+}
+
+async function toggleOpenAIRecording() {
+  if (transcribing) return; // still working on the previous clip
+  if (!recorder.recording) {
     echoGuard = null;
-    rec = new SR();
-    rec.lang = settings.speechLang;
-    rec.continuous = true;
-    rec.interimResults = true;
-    const base = input.value.trim();
-    rec.onresult = (e: any) => {
-      let text = '';
-      for (let i = 0; i < e.results.length; i++) text += e.results[i][0].transcript;
-      input.value = (base ? base + ' ' : '') + text.trim();
-      autosize();
-    };
-    rec.onerror = (e: any) => {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Speech recognition is not allowed here. Use the mic key on the iPad keyboard instead.', 4500);
-      else if (e.error !== 'aborted' && e.error !== 'no-speech') toast('Dictation error: ' + e.error);
-    };
-    const me = rec;
-    rec.onend = () => { if (rec === me) rec = null; btn.classList.remove('listening'); };
     try {
-      rec.start();
-      btn.classList.add('listening');
-    } catch (err) {
-      rec = null;
-      toast('Could not start dictation: ' + (err as Error).message);
+      await recorder.start();
+    } catch (e) {
+      const name = (e as Error).name;
+      toast(name === 'NotAllowedError' ? 'Microphone access was denied. Allow it in Settings → Safari → Microphone.' : 'Could not start the microphone: ' + (e as Error).message, 4500);
+      return;
     }
+    setMicState('listening');
+    return;
+  }
+  const file = await recorder.stop();
+  if (!file) { setMicState('idle'); return; }
+  setMicState('busy', 'Transcribing…');
+  transcribing = new AbortController();
+  const sess = session;
+  try {
+    const text = await transcribe(settings.openaiKey.trim(), file, transcriptionContext(), transcribing.signal);
+    if (sess === session) {
+      if (text) appendToInput(text); else toast('No speech recognized');
+    }
+  } catch (e) {
+    if ((e as Error).name !== 'AbortError') toast((e as Error).message, 4500);
+  } finally {
+    transcribing = null;
+    setMicState('idle');
+  }
+}
+
+let webSpeech: any = null;
+function toggleWebSpeech() {
+  if (webSpeech) { webSpeech.stop(); return; }
+  echoGuard = null;
+  const rec = new SpeechRec();
+  webSpeech = rec;
+  rec.lang = settings.speechLang;
+  rec.continuous = true;
+  rec.interimResults = true;
+  const base = input.value.trim();
+  rec.onresult = (e: any) => {
+    let text = '';
+    for (let i = 0; i < e.results.length; i++) text += e.results[i][0].transcript;
+    input.value = (base ? base + ' ' : '') + text.trim();
+    autosize();
+  };
+  rec.onerror = (e: any) => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Speech recognition is not allowed here. Use the mic key on the iPad keyboard, or add an OpenAI key in Settings.', 4500);
+    else if (e.error !== 'aborted' && e.error !== 'no-speech') toast('Dictation error: ' + e.error);
+  };
+  rec.onend = () => { if (webSpeech === rec) webSpeech = null; setMicState('idle'); };
+  try {
+    rec.start();
+    setMicState('listening');
+  } catch (err) {
+    webSpeech = null;
+    toast('Could not start dictation: ' + (err as Error).message);
+  }
+}
+
+function setupDictation() {
+  updateMicButton();
+  recorder.onAutoStop = () => { if (recorder.recording) toggleOpenAIRecording(); };
+  stopDictation = () => {
+    // Sending a message discards any recording or recognition still in progress.
+    if (recorder.recording) recorder.cancel();
+    transcribing?.abort();
+    if (webSpeech) {
+      const r = webSpeech;
+      webSpeech = null;
+      r.onresult = null;
+      try { r.abort(); } catch { /* already stopped */ }
+    }
+    setMicState('idle');
+  };
+  $('#btn-mic').addEventListener('click', () => {
+    if (useOpenAIVoice()) toggleOpenAIRecording();
+    else if (SpeechRec) toggleWebSpeech();
   });
 }
 
@@ -613,18 +704,24 @@ async function openSettings() {
     <label>Model</label><select id="s-model"></select>
     <label>Thinking effort <p class="hint">Higher is more careful but slower and more expensive. Medium suits tutoring.</p></label>
     <select id="s-effort"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">Extra high</option><option value="max">Max</option></select>
-    <label>Dictation language <p class="hint">For the mic button in the app (e.g. sv-SE, en-US). The iPad keyboard's own mic key uses the keyboard language.</p></label>
+    <label>OpenAI API key (voice input, optional)
+      <p class="hint">With this key, the mic button records you and transcribes the audio with OpenAI's speech model, using the conversation as context, so math terms come through correctly (about half a cent per minute). Create one at platform.openai.com. Stored only on this device.</p></label>
+    <input type="password" id="s-okey" placeholder="sk-…" autocomplete="off" autocapitalize="off" spellcheck="false" />
+    <label>Browser dictation language <p class="hint">Only used by the mic button when no OpenAI key is set (e.g. sv-SE, en-US).</p></label>
     <input type="text" id="s-lang" autocapitalize="off" spellcheck="false" />
     <label>Text size</label>
     <select id="s-font"><option value="0.9">Small</option><option value="1">Normal</option><option value="1.12">Large</option><option value="1.25">Extra large</option></select>
     <label>Data</label>
     <div class="row"><button class="pill" type="button" id="s-export">Export all sessions</button>
     <button class="pill" type="button" id="s-import">Import…</button><input type="file" id="s-file" accept="application/json,.json" hidden /></div>
+    <p class="hint" style="margin-top:14px">Version ${esc(__BUILD__)}</p>
   </div>`);
   const key = body.querySelector('#s-key') as HTMLInputElement;
   const model = body.querySelector('#s-model') as HTMLSelectElement;
   const effort = body.querySelector('#s-effort') as HTMLSelectElement;
   const lang = body.querySelector('#s-lang') as HTMLInputElement;
+  const okey = body.querySelector('#s-okey') as HTMLInputElement;
+  okey.value = settings.openaiKey;
   const font = body.querySelector('#s-font') as HTMLSelectElement;
   for (const m of MODELS) model.append(new Option(m.name, m.id));
   key.value = settings.apiKey;
@@ -655,10 +752,12 @@ async function openSettings() {
     model: model.value,
     effort: effort.value as Settings['effort'],
     speechLang: lang.value.trim() || 'en-US',
+    openaiKey: okey.value.trim(),
     fontScale: Number(font.value) || 1,
   };
   saveSettings(settings);
   applyFont();
+  updateMicButton();
 }
 
 function applyFont() { document.documentElement.style.setProperty('--scale', String(settings.fontScale)); }
@@ -668,6 +767,26 @@ async function openProgress() {
     ? renderSkillMap(session.skillmap)
     : '<p>No skill map yet. The tutor shows one after the first diagnostic questions, or tap "Show progress".</p>';
   await modal('Progress', body, [{ label: 'Close', value: 'close', primary: true }]);
+}
+
+// ---------- Update check ----------
+// GitHub Pages lets browsers cache the page for a while, and a home-screen app keeps running in
+// the background. When the app comes back to the foreground, check whether a newer build is
+// deployed and offer a reload.
+const currentBundle = (document.querySelector('script[type="module"][src]') as HTMLScriptElement | null)?.getAttribute('src') ?? '';
+let updateOffered = false;
+async function checkForUpdate() {
+  if (updateOffered || import.meta.env.DEV || !currentBundle) return;
+  try {
+    // 'reload' bypasses and refreshes the HTTP cache, so location.reload() then gets the new page.
+    const html = await (await fetch('./index.html', { cache: 'reload' })).text();
+    const latest = /<script[^>]+type="module"[^>]+src="([^"]+)"/.exec(html)?.[1];
+    if (latest && latest !== currentBundle) {
+      updateOffered = true;
+      const r = await modal('Update available', 'A new version of the app has been deployed.', [{ label: 'Later', value: 'later' }, { label: 'Reload now', value: 'reload', primary: true }]);
+      if (r === 'reload') { await flushBoard(); location.reload(); }
+    }
+  } catch { /* offline */ }
 }
 
 // ---------- Boot ----------
@@ -687,7 +806,8 @@ async function boot() {
     const t = await promptText('Rename session', session.title);
     if (t) { session.title = t; await putSession(session); updateHeader(); }
   });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) flushBoard(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flushBoard(); else checkForUpdate(); });
+  setTimeout(checkForUpdate, 3000);
 
   const all = await listSessions();
   const lastId = uiPref<string | null>('lastSession', null);

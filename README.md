@@ -7,7 +7,7 @@ Jane Street's [socratic-tutor skill](https://github.com/janestreet/agent_skills/
 - **Figures from Claude**: accurate function and geometry plots (a JSON `plot` block rendered by the app) and free-form SVG diagrams.
 - **Apple Pencil whiteboard**: pressure-sensitive ink, an eraser, and undo. The board is cropped and sent to Claude as an image.
 - **Annotate Claude's figures**: tap "✎ To board" on any figure, draw on it, then tap "Send board".
-- **Text input**: type, use the mic key on the iPad keyboard (dictation), or write in the text box with the Pencil (Scribble converts it to text). A mic button using Web Speech appears where the browser supports it.
+- **Voice input**: with an optional OpenAI API key in Settings, the mic button records you and transcribes the audio with OpenAI's `gpt-transcribe` (about $0.0045/min). The tutor's last message and the skill-map terms are sent as context, so math vocabulary is recognized. Without the key, the button falls back to the browser's built-in dictation. You can also type, use the iPad keyboard's mic key, or write in the text box with the Pencil (Scribble).
 - **Progress**: the tutor's skill map is rendered as bars and kept in a Progress panel.
 - **Sessions**: saved on the device in IndexedDB, together with each session's board. You can export and import them as JSON.
 - Shows an estimate of each session's API cost.
@@ -57,6 +57,7 @@ The deployed page contains no secrets. Your key lives only on your iPad.
 | `src/prompt.ts` | System prompt: interface instructions (math, figure formats, skill map) plus the tutor skill |
 | `src/socratic-tutor.md` | The unmodified Jane Street skill (MIT, see `THIRD_PARTY_NOTICES.txt`) |
 | `src/claude.ts` | Streaming Messages API call, model list and prices, demo mode |
+| `src/transcribe.ts` | Microphone recording and OpenAI transcription with conversation context |
 | `src/board.ts` | Whiteboard: Pencil input, stroke eraser, undo/redo, export to PNG |
 | `src/plot.ts` | Safe expression parser and the `plot` block → SVG renderer |
 | `src/markdown.ts` | Markdown + KaTeX + figure and skill-map blocks, sanitized with DOMPurify |
