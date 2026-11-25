@@ -285,8 +285,7 @@ async function send(text: string, forceBoard = false) {
   session.updated = Date.now();
   await putSession(session);
   messagesEl.append(messageEl(msg));
-  input.value = '';
-  autosize();
+  clearComposerAfterSend(text);
   updateAttachChip();
   updateHeader();
   scrollToBottom(true);
@@ -366,6 +365,35 @@ function setBusyUi(on: boolean) {
   ($('#board-send') as HTMLButtonElement).disabled = on;
 }
 
+// iPad keyboard dictation often commits its final text a moment after the message was sent,
+// putting it back into the cleared field. For a short while after sending, drop text that
+// matches what was just sent.
+let echoGuard: { text: string; until: number } | null = null;
+let stopDictation: () => void = () => {};
+
+function clearComposerAfterSend(sent: string) {
+  stopDictation();
+  input.value = '';
+  autosize();
+  const norm = sent.replace(/\s+/g, ' ').trim();
+  if (norm) {
+    echoGuard = { text: norm, until: Date.now() + 2000 };
+    // Some dictation commits don't fire any event, so also check on a timer.
+    for (const ms of [250, 700, 1400]) setTimeout(dropDictationEcho, ms);
+  }
+}
+
+function dropDictationEcho() {
+  if (!echoGuard) return;
+  if (Date.now() > echoGuard.until) { echoGuard = null; return; }
+  const v = input.value.replace(/\s+/g, ' ').trim();
+  // Require a substantial chunk, so a new message typed right away isn't wiped.
+  if (v.length >= Math.min(echoGuard.text.length, 6) && echoGuard.text.includes(v)) {
+    input.value = '';
+    autosize();
+  }
+}
+
 function autosize() {
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight + 2, window.innerHeight * 0.3) + 'px';
@@ -377,7 +405,8 @@ function setupComposer() {
     if (busy) { abort?.abort(); return; }
     send(input.value);
   });
-  input.addEventListener('input', autosize);
+  input.addEventListener('input', () => { dropDictationEcho(); autosize(); });
+  for (const ev of ['compositionend', 'change'] as const) input.addEventListener(ev, dropDictationEcho);
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
@@ -403,8 +432,17 @@ function setupDictation() {
   if (!SR) return;
   btn.hidden = false;
   let rec: any = null;
+  stopDictation = () => {
+    if (!rec) return;
+    const r = rec;
+    rec = null;
+    r.onresult = null;
+    try { r.abort(); } catch { /* already stopped */ }
+    btn.classList.remove('listening');
+  };
   btn.addEventListener('click', () => {
     if (rec) { rec.stop(); return; }
+    echoGuard = null;
     rec = new SR();
     rec.lang = settings.speechLang;
     rec.continuous = true;
@@ -420,7 +458,8 @@ function setupDictation() {
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Speech recognition is not allowed here. Use the mic key on the iPad keyboard instead.', 4500);
       else if (e.error !== 'aborted' && e.error !== 'no-speech') toast('Dictation error: ' + e.error);
     };
-    rec.onend = () => { rec = null; btn.classList.remove('listening'); };
+    const me = rec;
+    rec.onend = () => { if (rec === me) rec = null; btn.classList.remove('listening'); };
     try {
       rec.start();
       btn.classList.add('listening');
