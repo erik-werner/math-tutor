@@ -17,32 +17,61 @@ function pickMime(): { mime: string; ext: string } {
   return { mime: '', ext: 'm4a' };
 }
 
+// The microphone stream is kept open between recordings, because iOS asks for permission
+// again every time a web page reopens the microphone. It is released after this much idle
+// time, or when the page is closed.
+const IDLE_RELEASE_MS = 10 * 60 * 1000;
+
 export class Recorder {
   private rec: MediaRecorder | null = null;
   private stream: MediaStream | null = null;
   private chunks: Blob[] = [];
+  private mime = '';
   private ext = 'm4a';
   private timer = 0;
+  private idleTimer = 0;
   private stopped: Promise<Blob> | null = null;
   started = 0;
   onAutoStop: () => void = () => {};
 
+  constructor() {
+    addEventListener('pagehide', () => { this.cancel(); this.release(); });
+  }
+
   get recording() { return this.rec !== null; }
 
+  private streamUsable() {
+    const tracks = this.stream?.getAudioTracks() ?? [];
+    // iOS ends or mutes the capture while the app is in the background.
+    return tracks.length > 0 && tracks.every((t) => t.readyState === 'live' && !t.muted);
+  }
+
   async start() {
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    clearTimeout(this.idleTimer);
+    if (!this.streamUsable()) {
+      this.release();
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    }
     const { mime, ext } = pickMime();
     this.ext = ext;
     this.chunks = [];
-    this.rec = mime ? new MediaRecorder(this.stream, { mimeType: mime }) : new MediaRecorder(this.stream);
+    this.rec = mime ? new MediaRecorder(this.stream!, { mimeType: mime }) : new MediaRecorder(this.stream!);
     const rec = this.rec;
+    this.mime = rec.mimeType || mime || 'audio/mp4';
+    const chunks = this.chunks;
     this.stopped = new Promise<Blob>((resolve) => {
-      rec.ondataavailable = (e) => { if (e.data.size) this.chunks.push(e.data); };
-      rec.onstop = () => resolve(new Blob(this.chunks, { type: rec.mimeType || mime || 'audio/mp4' }));
+      rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      rec.onstop = () => resolve(new Blob(chunks, { type: this.mime }));
     });
     rec.start(1000);
     this.started = Date.now();
     this.timer = window.setTimeout(() => this.onAutoStop(), MAX_SECONDS * 1000);
+  }
+
+  /** The audio recorded so far, for a live preview. */
+  snapshot(): File | null {
+    if (!this.rec || !this.chunks.length) return null;
+    return new File([new Blob(this.chunks, { type: this.mime })], `speech.${this.ext}`, { type: this.mime });
   }
 
   /** Stops recording and returns the audio as a named file. */
@@ -53,7 +82,7 @@ export class Recorder {
     this.rec = null;
     if (rec.state !== 'inactive') rec.stop();
     const blob = await this.stopped!;
-    this.release();
+    this.scheduleRelease();
     if (!blob.size) return null;
     return new File([blob], `speech.${this.ext}`, { type: blob.type });
   }
@@ -64,11 +93,17 @@ export class Recorder {
     const rec = this.rec;
     this.rec = null;
     try { if (rec && rec.state !== 'inactive') rec.stop(); } catch { /* ignore */ }
-    this.release();
+    this.scheduleRelease();
   }
 
-  private release() {
-    // Turns off the microphone (and the iPad's mic indicator).
+  private scheduleRelease() {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = window.setTimeout(() => { if (!this.rec) this.release(); }, IDLE_RELEASE_MS);
+  }
+
+  /** Turns off the microphone (and the iPad's mic indicator). */
+  release() {
+    clearTimeout(this.idleTimer);
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
   }
@@ -129,7 +164,11 @@ async function post(apiKey: string, form: FormData, signal?: AbortSignal): Promi
   return String(data?.text ?? '').trim();
 }
 
-export async function transcribe(apiKey: string, file: File, ctx: TranscribeContext, signal?: AbortSignal): Promise<string> {
+/**
+ * Transcribes a recording. With `retryWithoutContext` (the default), a rejected request is
+ * retried with the audio alone; live previews turn that off so a failure costs nothing extra.
+ */
+export async function transcribe(apiKey: string, file: File, ctx: TranscribeContext, signal?: AbortSignal, retryWithoutContext = true): Promise<string> {
   const base = () => {
     const f = new FormData();
     f.append('file', file, file.name);
@@ -146,7 +185,7 @@ export async function transcribe(apiKey: string, file: File, ctx: TranscribeCont
   } catch (e) {
     // If the context hints are rejected (e.g. a length limit), retry with the audio alone.
     // (Status 0 is included because a 400 is indistinguishable from a network error in a browser.)
-    if (e instanceof TranscribeError && (e.status === 400 || e.status === 0)) return post(apiKey, base(), signal);
+    if (retryWithoutContext && e instanceof TranscribeError && (e.status === 400 || e.status === 0)) return post(apiKey, base(), signal);
     throw e;
   }
 }

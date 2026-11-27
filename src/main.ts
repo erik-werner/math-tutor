@@ -402,6 +402,13 @@ function dropDictationEcho() {
   }
 }
 
+/** Sends the composer text, first finishing any voice recording or transcription in progress. */
+async function sendComposer(doSend: (text: string) => unknown = (t) => send(t)) {
+  if (recorder.recording) await toggleOpenAIRecording();
+  else if (transcription) await transcription;
+  doSend(input.value);
+}
+
 function autosize() {
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight + 2, window.innerHeight * 0.3) + 'px';
@@ -411,25 +418,25 @@ function setupComposer() {
   $('#composer').addEventListener('submit', (e) => {
     e.preventDefault();
     if (busy) { abort?.abort(); return; }
-    send(input.value);
+    sendComposer();
   });
   input.addEventListener('input', () => { dropDictationEcho(); autosize(); });
   for (const ev of ['compositionend', 'change'] as const) input.addEventListener(ev, dropDictationEcho);
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      if (!busy) send(input.value);
+      if (!busy) sendComposer();
     }
   });
   $('#quick').addEventListener('click', (e) => {
     const b = (e.target as HTMLElement).closest('button');
-    if (b?.dataset.quick) send(b.dataset.quick + (input.value.trim() ? '\n\n' + input.value : ''));
+    if (b?.dataset.quick) sendComposer((t) => send(b.dataset.quick + (t.trim() ? '\n\n' + t : '')));
   });
   $('#attach-chip').addEventListener('click', () => {
     attachOverride = !attachOn();
     updateAttachChip();
   });
-  $('#board-send').addEventListener('click', () => send(input.value, true));
+  $('#board-send').addEventListener('click', () => sendComposer((t) => send(t, true)));
   setupDictation();
 }
 
@@ -440,6 +447,7 @@ function setupComposer() {
 const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 const recorder = new Recorder();
 let transcribing: AbortController | null = null;
+let transcription: Promise<void> | null = null;
 
 function useOpenAIVoice() { return !!settings.openaiKey.trim() && recordingSupported(); }
 
@@ -478,34 +486,99 @@ function transcriptionContext(): TranscribeContext {
   };
 }
 
-async function toggleOpenAIRecording() {
-  if (transcribing) return; // still working on the previous clip
-  if (!recorder.recording) {
-    echoGuard = null;
-    try {
-      await recorder.start();
-    } catch (e) {
-      const name = (e as Error).name;
-      toast(name === 'NotAllowedError' ? 'Microphone access was denied. Allow it in Settings → Safari → Microphone.' : 'Could not start the microphone: ' + (e as Error).message, 4500);
-      return;
+// Live preview while recording: every few seconds the audio so far is transcribed and shown
+// in the text field, greyed out. When recording stops, the whole clip is transcribed once
+// more and that text replaces the preview.
+let preview: { base: string; stopped: boolean; timer: number; ctrl: AbortController | null; failures: number } | null = null;
+
+function showVoiceText(base: string, text: string) {
+  input.value = base && text ? base + ' ' + text : base || text;
+  autosize();
+  input.scrollTop = input.scrollHeight;
+}
+
+function startPreview() {
+  const p = { base: input.value.replace(/\s+$/, ''), stopped: false, timer: 0, ctrl: null as AbortController | null, failures: 0 };
+  preview = p;
+  input.readOnly = true;
+  input.classList.add('interim');
+  const tick = async () => {
+    if (p.stopped || !recorder.recording) return;
+    const file = recorder.snapshot();
+    if (file && file.size > 8000) { // the first chunk can be just the file header
+      p.ctrl = new AbortController();
+      try {
+        const text = await transcribe(settings.openaiKey.trim(), file, transcriptionContext(), p.ctrl.signal, false);
+        if (!p.stopped && text) showVoiceText(p.base, text);
+        p.failures = 0;
+      } catch {
+        // Previews are best-effort; give up on them after repeated failures.
+        if (++p.failures >= 3) return;
+      } finally {
+        p.ctrl = null;
+      }
     }
-    setMicState('listening');
+    // Each preview re-sends the whole clip so far, so space them out as the clip grows.
+    const secs = (Date.now() - recorder.started) / 1000;
+    if (!p.stopped) p.timer = window.setTimeout(tick, Math.max(1500, secs * 125));
+  };
+  p.timer = window.setTimeout(tick, 2000);
+}
+
+/** Ends the preview and returns the text that was in the field before recording. */
+function stopPreview(): string {
+  input.readOnly = false;
+  input.classList.remove('interim');
+  const p = preview;
+  preview = null;
+  if (!p) return input.value.replace(/\s+$/, '');
+  p.stopped = true;
+  clearTimeout(p.timer);
+  p.ctrl?.abort();
+  return p.base;
+}
+
+function toggleOpenAIRecording(): Promise<void> {
+  if (transcription) return transcription; // still working on the previous clip
+  if (!recorder.recording) return startRecording();
+  transcription = finishRecording().finally(() => { transcription = null; });
+  return transcription;
+}
+
+async function startRecording() {
+  echoGuard = null;
+  try {
+    await recorder.start();
+  } catch (e) {
+    const name = (e as Error).name;
+    toast(name === 'NotAllowedError' ? 'Microphone access was denied. Allow it in Settings → Safari → Microphone.' : 'Could not start the microphone: ' + (e as Error).message, 4500);
     return;
   }
+  setMicState('listening');
+  startPreview();
+}
+
+async function finishRecording() {
+  const shown = input.value;
+  const base = stopPreview();
   const file = await recorder.stop();
   if (!file) { setMicState('idle'); return; }
   setMicState('busy', 'Transcribing…');
+  input.classList.add('interim');
   transcribing = new AbortController();
   const sess = session;
   try {
     const text = await transcribe(settings.openaiKey.trim(), file, transcriptionContext(), transcribing.signal);
     if (sess === session) {
-      if (text) appendToInput(text); else toast('No speech recognized');
+      if (text) showVoiceText(base, text);
+      else { showVoiceText(base, ''); toast('No speech recognized'); }
     }
   } catch (e) {
-    if ((e as Error).name !== 'AbortError') toast((e as Error).message, 4500);
+    // The preview text (if any) stays in the field.
+    if ((e as Error).name !== 'AbortError') { toast((e as Error).message, 4500); input.value = shown; autosize(); }
   } finally {
     transcribing = null;
+    input.classList.remove('interim');
     setMicState('idle');
   }
 }
@@ -545,6 +618,7 @@ function setupDictation() {
   recorder.onAutoStop = () => { if (recorder.recording) toggleOpenAIRecording(); };
   stopDictation = () => {
     // Sending a message discards any recording or recognition still in progress.
+    if (preview) stopPreview();
     if (recorder.recording) recorder.cancel();
     transcribing?.abort();
     if (webSpeech) {
@@ -625,6 +699,7 @@ function setupBoard() {
 async function openSession(s: Session) {
   if (session) await flushBoard();
   abort?.abort();
+  stopDictation();
   session = s;
   setUiPref('lastSession', s.id);
   const rec = await getBoard(s.id);

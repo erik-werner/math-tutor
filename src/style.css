@@ -201,3 +201,4 @@ body[data-layout="board"] #chat-pane, body[data-layout="board"] #divider { displ
   .seg button { padding: 5px 8px; }
   #board-send span { display: none; }
 }
+#input.interim { color: var(--muted); font-style: italic; }
