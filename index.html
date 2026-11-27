@@ -53,6 +53,10 @@
 
     <section id="board-pane">
       <div id="board-toolbar">
+        <div class="seg" id="pad-switch" role="tablist" aria-label="Board or scratch pad">
+          <button data-pad="board" class="active" role="tab" title="The board you send to the tutor">Board</button>
+          <button data-pad="scratch" role="tab" title="A private scratch pad that is never sent">Scratch</button>
+        </div>
         <div class="tool-group" id="colors">
           <button class="swatch active" data-color="#1f2328" style="--c:#1f2328" aria-label="Black pen"></button>
           <button class="swatch" data-color="#1f6feb" style="--c:#1f6feb" aria-label="Blue pen"></button>
@@ -62,17 +66,23 @@
         <div class="tool-group">
           <button class="icon-btn" id="tool-size" title="Pen thickness" aria-label="Pen thickness"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5" class="fill"/></svg></button>
           <button class="icon-btn" id="tool-eraser" title="Eraser (removes whole strokes)" aria-label="Eraser"><svg viewBox="0 0 24 24"><path d="M20 20H8.5L3.6 15.1a1.5 1.5 0 0 1 0-2.1L13 3.6a1.5 1.5 0 0 1 2.1 0l5.3 5.3a1.5 1.5 0 0 1 0 2.1L11.5 20M7.5 9l7.5 7.5"/></svg></button>
+          <button class="icon-btn" id="tool-select" title="Lasso: circle strokes to move, copy, cut or delete them" aria-label="Select"><svg viewBox="0 0 24 24"><path d="M7 17.5C4 16 2.5 13.8 2.5 11.5 2.5 6.8 6.8 3.5 12 3.5s9.5 3.3 9.5 8-4.3 8-9.5 8c-1 0-2-.1-2.9-.4" stroke-dasharray="3 2.4"/><path d="M8.5 15.5c-1.4 0-2.5 1-2.5 2.3S7 20.5 8.5 20.5"/></svg></button>
+          <button class="icon-btn" id="tool-paste" title="Paste what you copied (works across the board and the scratch pad)" aria-label="Paste"><svg viewBox="0 0 24 24"><path d="M9 4h6v3H9zM9 5.5H6.5A1.5 1.5 0 0 0 5 7v12.5A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V7a1.5 1.5 0 0 0-1.5-1.5H15"/></svg></button>
           <button class="icon-btn" id="tool-finger" title="Finger drawing (turns off automatically when an Apple Pencil is used)" aria-label="Finger drawing"><svg viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v6M10 10.5V6a2 2 0 0 0-4 0v8M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.9-5.9-2.3l-3.6-3.6a2 2 0 0 1 2.8-2.8L7 15"/></svg></button>
         </div>
         <div class="tool-group">
           <button class="icon-btn" id="tool-undo" title="Undo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
           <button class="icon-btn" id="tool-redo" title="Redo" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+          <button class="zoom-btn" id="tool-zoom" title="Pinch with two fingers to zoom and pan. Tap to reset the view.">100%</button>
           <button class="icon-btn" id="tool-clear" title="Clear board" aria-label="Clear board"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></button>
         </div>
         <div class="spacer"></div>
         <button class="pill primary" id="board-send" title="Send the board (and any typed text)"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4Z"/></svg><span>Send board</span></button>
       </div>
-      <div id="board"></div>
+      <div id="board-stack">
+        <div id="board" class="board-surface"></div>
+        <div id="scratch" class="board-surface scratch" hidden></div>
+      </div>
     </section>
   </main>
 

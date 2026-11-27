@@ -96,6 +96,7 @@ export const putSession = (sess: Session) => tx('sessions', 'readwrite', (s) => 
 export const deleteSession = async (id: string) => {
   await tx('sessions', 'readwrite', (s) => { s.delete(id); });
   await tx('boards', 'readwrite', (s) => { s.delete(id); });
+  await tx('boards', 'readwrite', (s) => { s.delete(id + '#scratch'); });
 };
 
 export interface BoardRecord { id: string; data: unknown }

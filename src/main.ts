@@ -1,7 +1,7 @@
 import 'katex/dist/katex.min.css';
 import './style.css';
 import type Anthropic from '@anthropic-ai/sdk';
-import { Board, loadImage, svgToPng } from './board';
+import { Board, hasClip, loadImage, onClipChange, svgToPng } from './board';
 import { MODELS, addUsage, friendlyError, streamReply } from './claude';
 import { extractLastSkillMap, renderMarkdown, renderSkillMap } from './markdown';
 import { systemPrompt, type Mode } from './prompt';
@@ -19,6 +19,9 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 let settings: Settings = loadSettings();
 let session: Session;
 let board: Board;
+let scratch: Board; // private scratch pad, never sent
+let pad: 'board' | 'scratch' = 'board';
+const activeBoard = () => (pad === 'board' ? board : scratch);
 let sentVersion = 0;
 let attachOverride: boolean | null = null; // null = automatic (on when the board has unsent changes)
 let busy = false;
@@ -230,6 +233,7 @@ messagesEl.addEventListener('click', async (e) => {
 });
 
 async function placeOnBoard(src: string, w: number, h2: number) {
+  showPad('board');
   if (document.body.dataset.layout === 'chat') setLayout('split');
   if (board.hasInk()) {
     const r = await modal('Put on board', 'Your board already has drawings on it.', [
@@ -637,60 +641,119 @@ function setupDictation() {
 
 // ---------- Board ----------
 let boardSaveTimer = 0;
+const scratchId = (id: string) => id + '#scratch';
+
 function persistBoardSoon() {
   clearTimeout(boardSaveTimer);
   const id = session.id;
-  boardSaveTimer = window.setTimeout(() => putBoard({ id, data: board.toJSON() }), 600);
+  boardSaveTimer = window.setTimeout(() => saveBoards(id), 600);
+}
+function saveBoards(id: string) {
+  return Promise.all([putBoard({ id, data: board.toJSON() }), putBoard({ id: scratchId(id), data: scratch.toJSON() })]);
 }
 async function flushBoard() {
   clearTimeout(boardSaveTimer);
-  if (session) await putBoard({ id: session.id, data: board.toJSON() });
+  if (session) await saveBoards(session.id);
 }
 
 function updateBoardUi() {
-  ($('#tool-undo') as HTMLButtonElement).disabled = !board.canUndo;
-  ($('#tool-redo') as HTMLButtonElement).disabled = !board.canRedo;
-  $('#tool-eraser').classList.toggle('active', board.tool === 'eraser');
-  $('#tool-finger').classList.toggle('active', board.fingerDraws);
+  const b = activeBoard();
+  ($('#tool-undo') as HTMLButtonElement).disabled = !b.canUndo;
+  ($('#tool-redo') as HTMLButtonElement).disabled = !b.canRedo;
+  ($('#tool-paste') as HTMLButtonElement).disabled = !hasClip();
+  $('#tool-eraser').classList.toggle('active', b.tool === 'eraser');
+  $('#tool-select').classList.toggle('active', b.tool === 'select');
+  $('#tool-finger').classList.toggle('active', b.fingerDraws);
+  $('#tool-zoom').textContent = Math.round(b.zoom * 100) + '%';
+  document.querySelectorAll<HTMLElement>('#pad-switch button').forEach((x) => {
+    x.classList.toggle('active', x.dataset.pad === pad);
+    x.setAttribute('aria-selected', String(x.dataset.pad === pad));
+  });
   updateAttachChip();
+}
+
+function showPad(p: 'board' | 'scratch') {
+  if (pad === p) return;
+  pad = p;
+  $('#board').hidden = p !== 'board';
+  $('#scratch').hidden = p !== 'scratch';
+  board.clearSelection();
+  scratch.clearSelection();
+  updateBoardUi();
+}
+
+type Tool = 'pen' | 'eraser' | 'select';
+function setTool(t: Tool) {
+  board.tool = t;
+  scratch.tool = t;
+  updateBoardUi();
 }
 
 function setupBoard() {
   board = new Board($('#board'));
-  board.fingerDraws = !settings.penOnly;
-  board.onChange = () => { updateBoardUi(); persistBoardSoon(); };
-  board.onPenDetected = () => { updateBoardUi(); toast('Apple Pencil detected: fingers no longer draw (toggle with ✋)'); };
+  scratch = new Board($('#scratch'));
+  for (const b of [board, scratch]) {
+    b.fingerDraws = !settings.penOnly;
+    b.onChange = () => { updateBoardUi(); persistBoardSoon(); };
+    b.onViewChange = () => { if (b === activeBoard()) $('#tool-zoom').textContent = Math.round(b.zoom * 100) + '%'; persistBoardSoon(); };
+    b.onPenDetected = () => {
+      board.fingerDraws = scratch.fingerDraws = false;
+      updateBoardUi();
+      toast('Apple Pencil detected: fingers no longer draw (toggle with ✋). Pinch with two fingers to zoom and pan.', 4000);
+    };
+    b.onCopy = (cut) => toast(`${cut ? 'Cut' : 'Copied'}. Tap Paste on the ${b === board ? 'scratch pad' : 'board'} (or here) to insert it.`);
+  }
+  onClipChange(updateBoardUi);
+  $('#pad-switch').addEventListener('click', (e) => {
+    const p = ((e.target as HTMLElement).closest('button') as HTMLElement | null)?.dataset.pad;
+    if (p === 'board' || p === 'scratch') showPad(p);
+  });
   const sizes = [2.2, 3.5, 6];
   let sizeIdx = 1;
   $('#colors').addEventListener('click', (e) => {
     const b = (e.target as HTMLElement).closest('.swatch') as HTMLElement | null;
     if (!b) return;
     document.querySelectorAll('#colors .swatch').forEach((s) => s.classList.toggle('active', s === b));
-    board.color = b.dataset.color!;
-    board.tool = 'pen';
-    updateBoardUi();
+    board.color = scratch.color = b.dataset.color!;
+    setTool('pen');
   });
   $('#tool-size').addEventListener('click', () => {
     sizeIdx = (sizeIdx + 1) % sizes.length;
-    board.size = sizes[sizeIdx];
-    board.tool = 'pen';
+    board.size = scratch.size = sizes[sizeIdx];
     $('#tool-size').querySelector('circle')!.setAttribute('r', String([1.6, 2.5, 4][sizeIdx]));
-    updateBoardUi();
+    setTool('pen');
   });
-  $('#tool-eraser').addEventListener('click', () => { board.tool = board.tool === 'eraser' ? 'pen' : 'eraser'; updateBoardUi(); });
+  $('#tool-eraser').addEventListener('click', () => setTool(activeBoard().tool === 'eraser' ? 'pen' : 'eraser'));
+  $('#tool-select').addEventListener('click', () => setTool(activeBoard().tool === 'select' ? 'pen' : 'select'));
+  $('#tool-paste').addEventListener('click', () => {
+    const b = activeBoard();
+    if (b.paste()) { (b === board ? scratch : board).tool = 'select'; updateBoardUi(); toast('Drag the selection to move it'); }
+  });
+  $('#tool-zoom').addEventListener('click', () => activeBoard().resetView());
   $('#tool-finger').addEventListener('click', () => {
-    board.fingerDraws = !board.fingerDraws;
+    board.fingerDraws = scratch.fingerDraws = !board.fingerDraws;
     settings.penOnly = !board.fingerDraws;
     saveSettings(settings);
     updateBoardUi();
-    toast(board.fingerDraws ? 'Fingers draw on the board' : 'Only the Apple Pencil draws');
+    toast(board.fingerDraws ? 'Fingers draw on the board (pinch with two fingers to zoom)' : 'Only the Apple Pencil draws');
   });
-  $('#tool-undo').addEventListener('click', () => board.undo());
-  $('#tool-redo').addEventListener('click', () => board.redo());
+  $('#tool-undo').addEventListener('click', () => activeBoard().undo());
+  $('#tool-redo').addEventListener('click', () => activeBoard().redo());
   $('#tool-clear').addEventListener('click', async () => {
-    if (board.isEmpty()) return;
-    const r = await modal('Clear the board?', 'You can still undo this.', [{ label: 'Cancel', value: 'no' }, { label: 'Clear', value: 'yes', primary: true }]);
-    if (r === 'yes') board.clear();
+    const b = activeBoard();
+    if (b.isEmpty()) return;
+    const what = b === board ? 'board' : 'scratch pad';
+    const r = await modal(`Clear the ${what}?`, 'You can still undo this.', [{ label: 'Cancel', value: 'no' }, { label: 'Clear', value: 'yes', primary: true }]);
+    if (r === 'yes') b.clear();
+  });
+  document.addEventListener('keydown', (e) => {
+    // Desktop convenience: Delete removes the selection, Escape clears it.
+    const t = e.target as HTMLElement;
+    if (t.closest('input, textarea, [contenteditable]')) return;
+    const b = activeBoard();
+    if (!b.hasSelection) return;
+    if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); b.deleteSelection(); }
+    else if (e.key === 'Escape') b.clearSelection();
   });
   updateBoardUi();
 }
@@ -702,8 +765,9 @@ async function openSession(s: Session) {
   stopDictation();
   session = s;
   setUiPref('lastSession', s.id);
-  const rec = await getBoard(s.id);
+  const [rec, srec] = await Promise.all([getBoard(s.id), getBoard(scratchId(s.id))]);
   board.load(rec?.data);
+  scratch.load(srec?.data);
   sentVersion = board.version;
   attachOverride = null;
   updateBoardUi();

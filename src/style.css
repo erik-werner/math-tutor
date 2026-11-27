@@ -159,8 +159,20 @@ body[data-layout="board"] #chat-pane, body[data-layout="board"] #divider { displ
 .tool-group { display: inline-flex; align-items: center; gap: 2px; }
 .swatch { width: 34px; height: 34px; border-radius: 50%; border: 3px solid #fff; background: var(--c); box-shadow: 0 0 0 1px #d0d7de; margin: 0 3px; padding: 0; }
 .swatch.active { box-shadow: 0 0 0 2px #2f6fdb; }
-#board { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+#board-stack { position: relative; flex: 1; min-height: 0; display: flex; }
+.board-surface { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   background-color: #fff; background-image: radial-gradient(#d6dbe1 1.2px, transparent 1.3px); background-size: 28px 28px; }
+.board-surface[hidden] { display: none; }
+.board-surface.scratch { background-color: #fffbea; background-image: radial-gradient(#e3d9b8 1.2px, transparent 1.3px); }
+#board-pane .seg { background: #e7ebef; }
+#board-pane .seg button { color: #1f2328; }
+#board-pane .seg button.active { background: #fff; }
+#board-pane .seg button[data-pad="scratch"].active { background: #fff3c4; }
+.zoom-btn { min-width: 50px; height: 34px; border: 1px solid #d0d7de; border-radius: 8px; background: #fff; color: #1f2328; font-size: 0.82em; font-variant-numeric: tabular-nums; padding: 0 6px; margin: 0 4px; }
+.sel-bar { position: absolute; left: 0; top: 0; display: flex; gap: 2px; padding: 3px; background: #24292f; border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.25); z-index: 5; }
+.sel-bar[hidden] { display: none; }
+.sel-bar button { border: none; background: none; color: #fff; padding: 7px 12px; border-radius: 7px; font-size: 0.9em; }
+.sel-bar button:active { background: rgba(255,255,255,.18); }
 .board-canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
 #board-pane .pill { border-color: #d0d7de; }
 #board-pane .pill.primary { background: #2f6fdb; border-color: #2f6fdb; color: #fff; }

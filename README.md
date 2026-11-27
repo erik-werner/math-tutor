@@ -6,6 +6,9 @@ Jane Street's [socratic-tutor skill](https://github.com/janestreet/agent_skills/
 - **Math rendering**: KaTeX for `$…$` and `$$…$$`.
 - **Figures from Claude**: accurate function and geometry plots (a JSON `plot` block rendered by the app) and free-form SVG diagrams.
 - **Apple Pencil whiteboard**: pressure-sensitive ink, an eraser, and undo. The board is cropped and sent to Claude as an image.
+- **Zoom and pan**: pinch or drag with two fingers. The % button resets the view, zooming out to show everything if needed.
+- **Scratch pad**: a second, private pad per session (Board | Scratch switch) for side calculations. It's never sent to Claude.
+- **Lasso selection**: with the lasso tool, circle strokes to move, copy, cut, or delete them. Paste works on both the board and the scratch pad, so you can move work between them.
 - **Annotate Claude's figures**: tap "✎ To board" on any figure, draw on it, then tap "Send board".
 - **Voice input**: with an optional OpenAI API key in Settings, the mic button records you and transcribes the audio with OpenAI's `gpt-transcribe` (about $0.0045/min). The tutor's last message and the skill-map terms are sent as context, so math vocabulary is recognized. A preview of the text appears while you speak (each preview re-transcribes the clip so far, which raises the cost to roughly 2–10× the base rate depending on clip length); tapping Send while recording transcribes and sends in one go. Without the key, the button falls back to the browser's built-in dictation. You can also type, use the iPad keyboard's mic key, or write in the text box with the Pencil (Scribble).
 - **Progress**: the tutor's skill map is rendered as bars and kept in a Progress panel.
@@ -21,7 +24,7 @@ There's no backend. The page calls the Anthropic API directly from the iPad with
 3. Start a **Tutor session** and name a topic, e.g. "Teach me eigenvalues".
 
 Tips:
-- Once the app has seen the Pencil, fingers stop drawing (palm rejection). The ✋ button toggles this.
+- Once the app has seen the Pencil, fingers stop drawing (palm rejection), and only two-finger gestures move the board. The ✋ button toggles this. With finger drawing on, one finger draws and two fingers pinch.
 - With unsent ink on the board, the 📎 **Board** chip next to the text box turns on and the board goes with your next message. Tap the chip to toggle it.
 - The layout switch at the top (Chat / Both / Board) and the drag handle between the panes adjust the split. Portrait mode stacks the chat above the board.
 - In Settings you can switch the model (Opus 5.5 is the default; Sonnet 5.5 is cheaper) and the thinking effort.
